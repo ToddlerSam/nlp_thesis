@@ -24,34 +24,6 @@ from nltk.classify.util import attested_labels, CutoffChecker, accuracy, log_lik
 from nltk.classify.megam import call_megam, write_megam_file, parse_megam_weights
 from nltk.classify.tadm import call_tadm, write_tadm_file, parse_tadm_weights
 
-
-ckey = 'ClkspMmRMOTAJvysssMpylY56'
-csecret = '34qxajeFKcPTvMocYT5xMdOTZrQohbOAO1btgpRihJuA1tGxlM'
-atoken = '138086873-jMTpMLwOTPKRRDQ9MnlgUvwIollZTadG3i9ZnRlz'
-asecret = 'xFdxY1bV2aRaxvy5AJ16i7kCxsVNe6MzThTr5QgJxJzwJ'
-
-client = MongoClient()
-db = client.thesis
-
-class listener(StreamListener):
-
-    def on_data(self, data):
-        allData = json.loads(data)
-        # print(allData)
-        tweet = allData["text"]
-        user = allData["user"]["screen_name"]
-        result = db.tweets.insert_one( { "tweet": tweet, "user": user } )
-        return(True)
-
-    def on_error(self, status):
-        print(status)
-
-
-auth = OAuthHandler(ckey, csecret)
-auth.set_access_token(atoken, asecret)
-twitterStream = Stream(auth, listener())
-twitterStream.filter(track=["ugly black", "jihad", "muslim terrorist", "gay nigguh"])
-
 #start process_tweet
 def processTweet(tweet):
     # process the tweets
@@ -76,7 +48,7 @@ line = fp.readline()
 
 while line:
     processedTweet = processTweet(line)
-    print processedTweet
+    #print processedTweet
     line = fp.readline()
 #end loop
 fp.close()
@@ -137,7 +109,7 @@ stopWords = getStopWordList('stopwords.txt')
 while line:
     processedTweet = processTweet(line)
     featureVector = getFeatureVector(processedTweet)
-    print featureVector
+    #print featureVector
     line = fp.readline()
 #end loop
 fp.close()
@@ -179,20 +151,48 @@ for row in inpTweets:
 featureList = list(set(featureList))
 # Extract feature vector for all tweets in one shote
 training_set = nltk.classify.util.apply_features(extract_features, tweets)
-
 NBClassifier = nltk.NaiveBayesClassifier.train(training_set)
 
-# Test the classifier
-testTweet = 'Congrats @ravikiranj, i heard you wrote a new tech post on sentiment analysis'
-processedTestTweet = processTweet(testTweet)
-print NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
+ckey = 'ClkspMmRMOTAJvysssMpylY56'
+csecret = '34qxajeFKcPTvMocYT5xMdOTZrQohbOAO1btgpRihJuA1tGxlM'
+atoken = '138086873-jMTpMLwOTPKRRDQ9MnlgUvwIollZTadG3i9ZnRlz'
+asecret = 'xFdxY1bV2aRaxvy5AJ16i7kCxsVNe6MzThTr5QgJxJzwJ'
 
-# max entropy-------------------------
-# from nltk.classify import MaxentClassifier
-# MaxEntClassifier = MaxentClassifier.train(training_set)
-# testTweet = 'Congrats @ravikiranj, i heard you wrote a new tech post on sentiment analysis'
-# processedTestTweet = processTweet(testTweet)
-# print MaxEntClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
-#
-# print MaxEntClassifier.show_most_informative_features(10)
-# max entropy-------------------------
+client = MongoClient()
+db = client.thesis
+
+class listener(StreamListener):
+
+    def on_data(self, data):
+        if 'retweeted_status' not in data:
+            allData = json.loads(data)
+            #print(allData)
+            tweet = allData["text"]
+            geo = allData["coordinates"]
+            result = db.tweets.insert_one( { "tweet": tweet, "location": geo} )
+            cursor = db.tweets.find()
+            for document in cursor:
+                testTweet = document["tweet"]
+                location = document["location"]
+                processedTestTweet = processTweet(testTweet)
+                print processedTestTweet
+                if any(c in processedTestTweet for c in ("ugly", "black", "racist")):
+                    polarity = NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
+                    db.data.insert_one( {"tweet": processedTestTweet, "location": location, "polarity": polarity, "category":"Racial Bias" } )
+                if any(c in processedTestTweet for c in ("muslim", "terrorist")):
+                    polarity = NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
+                    db.data.insert_one( {"tweet": processedTestTweet, "location": location, "polarity": polarity, "category":"Religious Bias" } )
+                if any(c in processedTestTweet for c in ("gay", "homo")):
+                    polarity = NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
+                    db.data.insert_one( {"tweet": processedTestTweet, "location": location, "polarity": polarity, "category":"Gender Bias" } )
+
+                ### HERE: this is the main loop ###
+        return(True)
+
+    def on_error(self, status):
+        print(status)
+
+auth = OAuthHandler(ckey, csecret)
+auth.set_access_token(atoken, asecret)
+twitterStream = Stream(auth, listener())
+twitterStream.filter(track=["ugly black","racist"])
