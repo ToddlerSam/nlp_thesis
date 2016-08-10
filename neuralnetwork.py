@@ -6,14 +6,11 @@ try:
     import numpy
 except ImportError:
     pass
-from nltk.corpus import stopwords
+
 import json
 import time
 import tempfile
 import os
-import itertools
-from nltk.collocations import BigramCollocationFinder
-from nltk.metrics import BigramAssocMeasures
 import gzip
 from collections import defaultdict
 from pymongo import MongoClient
@@ -27,7 +24,6 @@ from nltk.classify.util import attested_labels, CutoffChecker, accuracy, log_lik
 from nltk.classify.megam import call_megam, write_megam_file, parse_megam_weights
 from nltk.classify.tadm import call_tadm, write_tadm_file, parse_tadm_weights
 
-stopWords = set(stopwords.words('english'))
 #start process_tweet
 def processTweet(tweet):
     # process the tweets
@@ -41,17 +37,28 @@ def processTweet(tweet):
     tweet = re.sub('[\s]+', ' ', tweet)
     #Replace #word with word
     tweet = re.sub(r'#([^\s]+)', r'\1', tweet)
-
-    if tweet=="af":
-        tweet = "as fuck"
     #trim
     tweet = tweet.strip('\'"')
     return tweet
 #end
+
+#Read the tweets one by one and process it
+fp = open('sampleTweets.txt', 'r')
+line = fp.readline()
+
+while line:
+    processedTweet = processTweet(line)
+    #print processedTweet
+    line = fp.readline()
+#end loop
+fp.close()
+
+stopWords = []
+
 #start replaceTwoOrMore
 def replaceTwoOrMore(s):
     #look for 2 or more repetitions of character and replace with the character itself
-    pattern = re.compile(r"(.)\1{2,}", re.DOTALL)
+    pattern = re.compile(r"(.)\1{1,}", re.DOTALL)
     return pattern.sub(r"\1\1", s)
 #end
 
@@ -71,22 +78,7 @@ def getStopWordList(stopWordListFileName):
     fp.close()
     return stopWords
 #end
-def extract_features(document):
-    document_words = set(document)
-    features = {}
-    for word in word_features:
-        features['contains(%s)' % word] = (word in document_words)
-    return features
 
-def get_words_in_tweets(tweets):
-    all_words = []
-    for (words, sentiment) in tweets:
-      all_words.extend(words)
-    return all_words
-def get_word_features(wordlist):
-    wordlist = nltk.FreqDist(wordlist)
-    word_features = wordlist.keys()
-    return word_features
 #start getfeatureVector
 def getFeatureVector(tweet):
     featureVector = []
@@ -108,47 +100,149 @@ def getFeatureVector(tweet):
 #end
 
 #Read the tweets one by one and process it
-def bigram_classifier(tweet):
-    processedTweet = processTweet(tweet)
-    featureVector = getFeatureVector(processedTweet)
-    bigram_finder = BigramCollocationFinder.from_words(featureVector)
-    bigrams = bigram_finder.nbest(BigramAssocMeasures.chi_sq, 40)
-    bigram_word_feats = dict([(ngram, True) for ngram in itertools.chain(featureVector, bigrams)])
-    return bigram_word_feats
+fp = open('sampleTweets.txt', 'r')
+line = fp.readline()
 
+st = open('stopwords.txt', 'r')
+stopWords = getStopWordList('stopwords.txt')
+
+while line:
+    processedTweet = processTweet(line)
+    featureVector = getFeatureVector(processedTweet)
+    #print featureVector
+    line = fp.readline()
+#end loop
+fp.close()
 
 inpTweets = csv.reader(open('sampleTweets.csv', 'rb'), delimiter=',', quotechar='|')
 tweets = []
-check = []
 for row in inpTweets:
     sentiment = row[0]
     category = row[1]
     tweet = row[2]
-    bigram_features = bigram_classifier(tweet)
-    tweets.append((bigram_features, sentiment))
+    processedTweet = processTweet(tweet)
+    featureVector = getFeatureVector(processedTweet)
+    tweets.append((featureVector, sentiment));
 
-word_features = get_word_features(get_words_in_tweets(tweets))
+def extract_features(tweet):
+    tweet_words = set(tweet)
+    features = {}
+    for word in featureList:
+        features['contains(%s)' % word] = (word in tweet_words)
+    return features
 
+inpTweets = csv.reader(open('sampleTweets.csv', 'rb'), delimiter=',', quotechar='|')
+stopWords = getStopWordList('stopwords.txt')
+featureList = []
+
+# Get tweet words
+tweets = []
+for row in inpTweets:
+    sentiment = row[0]
+    category = row[1]
+    tweet = row[2]
+    processedTweet = processTweet(tweet)
+    featureVector = getFeatureVector(processedTweet)
+    featureList.extend(featureVector)
+    tweets.append((featureVector, sentiment));
+#end loop
+
+# Remove featureList duplicates
+featureList = list(set(featureList))
 # Extract feature vector for all tweets in one shote
-# training_set = nltk.classify.util.apply_features(extract_features, tweets)
+training_set = nltk.classify.util.apply_features(extract_features, tweets)
+# NBClassifier = nltk.NaiveBayesClassifier.train(training_set)
+processedTestTweet = processTweet('All muslims are terrorists')
+# polarity = NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
+# print(polarity)
 
-NBClassifier = nltk.NaiveBayesClassifier.train(tweets)
-testTweet = "Muslims are terrorists"
-bigram_features = bigram_classifier(testTweet)
-# polarity = NBClassifier.classify(extract_features(getFeatureVector(bigram_word_feats)))
-polarity = NBClassifier.classify(bigram_features)
-print(polarity)
-NBClassifier.show_most_informative_features()
-ckey = 'ClkspMmRMOTAJvysssMpylY56'
-csecret = '34qxajeFKcPTvMocYT5xMdOTZrQohbOAO1btgpRihJuA1tGxlM'
-atoken = '138086873-jMTpMLwOTPKRRDQ9MnlgUvwIollZTadG3i9ZnRlz'
-asecret = 'xFdxY1bV2aRaxvy5AJ16i7kCxsVNe6MzThTr5QgJxJzwJ'
 
-client = MongoClient()
-db = client.thesis
+import svm
+from svmutil import *
+def getSVMFeatureVectorAndLabels(tweets, featureList):
+    sortedFeatures = sorted(featureList)
+    map = {}
+    feature_vector = []
+    labels = []
+    for t in tweets:
+        label = 0
+        map = {}
+        #Initialize empty map
+        for w in sortedFeatures:
+            map[w] = 0
+
+        tweet_words = t[0]
+        tweet_opinion = t[1]
+        #Fill the map
+        for word in tweet_words:
+            #process the word (remove repetitions and punctuations)
+            word = replaceTwoOrMore(word)
+            word = word.strip('\'"?,.')
+            #set map[word] to 1 if word exists
+            if word in map:
+                map[word] = 1
+        #end for loop
+        values = map.values()
+        feature_vector.append(values)
+        if(tweet_opinion == 'positive'):
+            label = 0
+        elif(tweet_opinion == 'negative'):
+            label = 1
+        elif(tweet_opinion == 'neutral'):
+            label = 2
+        labels.append(label)
+    #return the list of feature_vector and labels
+    return {'feature_vector' : feature_vector, 'labels': labels}
+#end
+#training data
+labels = [0, 1, 1, 2]
+samples = [[0, 1, 0], [1, 1, 1], [1, 1, 0], [0, 0, 0]]
+
+#SVM params
+param = svm_parameter()
+param.C = 10
+param.kernel_type = LINEAR
+#instantiate the problem
+problem = svm_problem(labels, samples)
+#train the model
+model = svm_train(problem, param)
+# saved model can be loaded as below
+#model = svm_load_model('model_file')
+
+#save the model
+svm_save_model('model_file', model)
+
+#test data
+test_data = [[0, 1, 1], [1, 0, 1]]
+#predict the labels
+p_labels, p_accs, p_vals = svm_predict([0]*len(test_data), test_data, model)
+print p_labels
+
+
+#Train the classifier
+result = getSVMFeatureVectorAndLabels(tweets, featureList)
+problem = svm_problem(result['labels'], result['feature_vector'])
+#'-q' option suppress console output
+param = svm_parameter('-q')
+param.kernel_type = LINEAR
+classifier = svm_train(problem, param)
+svm_save_model('model_file', classifier)
+
+#Test the classifier
+test_feature_vector = getSVMFeatureVectorAndLabels(processedTestTweet, featureList)
+#p_labels contains the final labeling result
+p_labels, p_accs, p_vals = svm_predict([0] * len(test_feature_vector),test_feature_vector, classifier)
+
+# ckey = 'ClkspMmRMOTAJvysssMpylY56'
+# csecret = '34qxajeFKcPTvMocYT5xMdOTZrQohbOAO1btgpRihJuA1tGxlM'
+# atoken = '138086873-jMTpMLwOTPKRRDQ9MnlgUvwIollZTadG3i9ZnRlz'
+# asecret = 'xFdxY1bV2aRaxvy5AJ16i7kCxsVNe6MzThTr5QgJxJzwJ'
+
+# client = MongoClient()
+# db = client.thesis
 
 # class listener(StreamListener):
-#
+
 #     def on_data(self, data):
 #         if 'retweeted_status' not in data:
 #             allData = json.loads(data)
@@ -161,7 +255,7 @@ db = client.thesis
 #                 testTweet = document["tweet"]
 #                 location = document["location"]
 #                 processedTestTweet = processTweet(testTweet)
-#                 print(processedTestTweet)
+#                 print processedTestTweet
 #                 if any(c in processedTestTweet for c in ("ugly", "black", "racist")):
 #                     polarity = NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
 #                     db.data.insert_one( {"tweet": processedTestTweet, "location": location, "polarity": polarity, "category":"Racial Bias" } )
@@ -171,13 +265,13 @@ db = client.thesis
 #                 if any(c in processedTestTweet for c in ("gay", "homo")):
 #                     polarity = NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
 #                     db.data.insert_one( {"tweet": processedTestTweet, "location": location, "polarity": polarity, "category":"Gender Bias" } )
-#
+
 #                 ### HERE: this is the main loop ###
 #         return(True)
-#
+
 #     def on_error(self, status):
 #         print(status)
-#
+
 # auth = OAuthHandler(ckey, csecret)
 # auth.set_access_token(atoken, asecret)
 # twitterStream = Stream(auth, listener())

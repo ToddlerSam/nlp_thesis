@@ -9,7 +9,10 @@ except ImportError:
 from nltk.corpus import stopwords
 import json
 import time
+import collections
 import tempfile
+from nltk import precision
+from nltk import recall
 import os
 import itertools
 from nltk.collocations import BigramCollocationFinder
@@ -27,6 +30,8 @@ from nltk.classify.util import attested_labels, CutoffChecker, accuracy, log_lik
 from nltk.classify.megam import call_megam, write_megam_file, parse_megam_weights
 from nltk.classify.tadm import call_tadm, write_tadm_file, parse_tadm_weights
 
+client = MongoClient()
+db = client.thesis
 stopWords = set(stopwords.words('english'))
 #start process_tweet
 def processTweet(tweet):
@@ -112,73 +117,57 @@ def bigram_classifier(tweet):
     processedTweet = processTweet(tweet)
     featureVector = getFeatureVector(processedTweet)
     bigram_finder = BigramCollocationFinder.from_words(featureVector)
-    bigrams = bigram_finder.nbest(BigramAssocMeasures.chi_sq, 40)
+    try:
+        bigrams = bigram_finder.nbest(BigramAssocMeasures.chi_sq, 500)
+    except:
+        print ''
     bigram_word_feats = dict([(ngram, True) for ngram in itertools.chain(featureVector, bigrams)])
     return bigram_word_feats
 
-
-inpTweets = csv.reader(open('sampleTweets.csv', 'rb'), delimiter=',', quotechar='|')
-tweets = []
+trainfeats = []
+testfeats = []
 check = []
+inpTweets = db.trainingSet.find()
 for row in inpTweets:
-    sentiment = row[0]
-    category = row[1]
-    tweet = row[2]
-    bigram_features = bigram_classifier(tweet)
-    tweets.append((bigram_features, sentiment))
+    sentiment = row["sentiment"]
+    tweet = row["tweet"]
+    try:
+        bigram_features = bigram_classifier(tweet)
+    except:
+        print ''
+    trainfeats.append((bigram_features, sentiment))
 
-word_features = get_word_features(get_words_in_tweets(tweets))
+word_features = get_word_features(get_words_in_tweets(trainfeats))
+testTweets = db.testSet.find()
+NBClassifier = nltk.NaiveBayesClassifier.train(trainfeats)
+for doc in testTweets:
+    testTweet = doc["tweet"]
+    try:
+        bigram_features = bigram_classifier(testTweet)
+    except:
+        print ''
+    polarity = NBClassifier.classify(bigram_features)
+    testfeats.append((bigram_features, polarity))
 
-# Extract feature vector for all tweets in one shote
-# training_set = nltk.classify.util.apply_features(extract_features, tweets)
 
-NBClassifier = nltk.NaiveBayesClassifier.train(tweets)
-testTweet = "Muslims are terrorists"
-bigram_features = bigram_classifier(testTweet)
-# polarity = NBClassifier.classify(extract_features(getFeatureVector(bigram_word_feats)))
-polarity = NBClassifier.classify(bigram_features)
-print(polarity)
+refsets = collections.defaultdict(set)
+testsets = collections.defaultdict(set)
+
+for i, (feats, label) in enumerate(trainfeats):
+    refsets[label].add(i)
+
+for i, (feats, label) in enumerate(testfeats):
+    observed = NBClassifier.classify(feats)
+    testsets[observed].add(i)
+
+
+print(nltk.classify.accuracy(NBClassifier, testfeats))
+print(refsets['neutral'])
+print(testsets['neutral'])
+# print(precision(refsets['pos'], testsets['pos']))
+# print('pos precision:', nltk.metrics.precision(refsets['pos'], testsets['pos']))
+# print(recall(refsets['pos'], testsets['pos']))
+# print(precision(refsets['neg'], testsets['neg']))
+# print('neg recall:', nltk.metrics.recall(refsets['neg'], testsets['neg']))
+#print(nltk.classify.accuracy(NBClassifier, testTweet))
 NBClassifier.show_most_informative_features()
-ckey = 'ClkspMmRMOTAJvysssMpylY56'
-csecret = '34qxajeFKcPTvMocYT5xMdOTZrQohbOAO1btgpRihJuA1tGxlM'
-atoken = '138086873-jMTpMLwOTPKRRDQ9MnlgUvwIollZTadG3i9ZnRlz'
-asecret = 'xFdxY1bV2aRaxvy5AJ16i7kCxsVNe6MzThTr5QgJxJzwJ'
-
-client = MongoClient()
-db = client.thesis
-
-# class listener(StreamListener):
-#
-#     def on_data(self, data):
-#         if 'retweeted_status' not in data:
-#             allData = json.loads(data)
-#             #print(allData)
-#             tweet = allData["text"]
-#             geo = allData["coordinates"]
-#             result = db.tweets.insert_one( { "tweet": tweet, "location": geo} )
-#             cursor = db.tweets.find()
-#             for document in cursor:
-#                 testTweet = document["tweet"]
-#                 location = document["location"]
-#                 processedTestTweet = processTweet(testTweet)
-#                 print(processedTestTweet)
-#                 if any(c in processedTestTweet for c in ("ugly", "black", "racist")):
-#                     polarity = NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
-#                     db.data.insert_one( {"tweet": processedTestTweet, "location": location, "polarity": polarity, "category":"Racial Bias" } )
-#                 if any(c in processedTestTweet for c in ("muslim", "terrorist")):
-#                     polarity = NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
-#                     db.data.insert_one( {"tweet": processedTestTweet, "location": location, "polarity": polarity, "category":"Religious Bias" } )
-#                 if any(c in processedTestTweet for c in ("gay", "homo")):
-#                     polarity = NBClassifier.classify(extract_features(getFeatureVector(processedTestTweet)))
-#                     db.data.insert_one( {"tweet": processedTestTweet, "location": location, "polarity": polarity, "category":"Gender Bias" } )
-#
-#                 ### HERE: this is the main loop ###
-#         return(True)
-#
-#     def on_error(self, status):
-#         print(status)
-#
-# auth = OAuthHandler(ckey, csecret)
-# auth.set_access_token(atoken, asecret)
-# twitterStream = Stream(auth, listener())
-# twitterStream.filter(track=["ugly black","racist"])
